@@ -39,7 +39,7 @@ Example:
 docker run --rm -e "NODE_API_URL=https://12345.sesam.cloud" \
     -e "NODE_JWT=$NODE_JWT" \
     -v /Users/john/dev/project/:/project \
-    sesam/nodeconfigdeploy
+    sesamcommunity/node_config_deployment
 ```
 
 
