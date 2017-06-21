@@ -1,5 +1,7 @@
 # Sesam Node Configuration Deployment
 
+[![Build Status](https://travis-ci.org/sesam-community/node_config_deployment.svg?branch=master)](https://travis-ci.org/sesam-community/node_config_deployment)
+
 Python script for deploying a given node config zip file to a node instance
 
 **WARNING** This deployment script will replace the entire existing configuration on the target Sesam Node
@@ -39,7 +41,7 @@ Example:
 docker run --rm -e "NODE_API_URL=https://12345.sesam.cloud" \
     -e "NODE_JWT=$NODE_JWT" \
     -v /Users/john/dev/project/:/project \
-    sesam/nodeconfigdeploy
+    sesamcommunity/node_config_deployment
 ```
 
 
