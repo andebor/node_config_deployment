@@ -23,7 +23,7 @@ All settings are configured by using environment variables.
 * NODE_WHITELIST - If provided, the deployment will only contain the files listed in this file.
 * NODE_VERIFY_VARS - Boolean, Will verify if the environment variables used in systems and pipes are defined in target node
 * NODE_VERIFY_SECRETS - Same as NODE_VERIFY_VARS, but with secrets.
-
+* NODE_DISABLE_PUMP_SCHEDULER - Disable pump scheduler on node to avoid automatic start after deployment
 
 ## Run
 

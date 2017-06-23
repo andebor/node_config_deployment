@@ -131,13 +131,13 @@ class ApiConnector(object):
             for warning in warnings:
                 logger.warning(warning)
 
-        # if config_resp.status_code != 200:
-        #     logger.error("Configuration upload did not return 200. See listed errors. \nFull response: \n{}"
-        #                  .format(config_resp.text))
-        #     failed_exit()
-        # else:
-        #     logger.info("Successfully uploaded configuration.")
-        #     logger.info("Full response: \n{}".format(config_resp.text))
+        if config_resp.status_code != 200:
+            logger.error("Configuration upload did not return 200. See listed errors. \nFull response: \n{}"
+                         .format(config_resp.text))
+            failed_exit()
+        else:
+            logger.info("Successfully uploaded configuration.")
+            logger.info("Full response: \n{}".format(config_resp.text))
 
     def get_env_variables(self):
         """Get all environment variables for Node instance"""
@@ -269,7 +269,7 @@ def load_whitelist(base_path, filename):
         failed_exit()
 
 
-def get_files_to_zip(directory, whitelist=None):
+def get_files_to_deploy(directory, whitelist=None):
     """
     Create a list of tuples with filename and relative paths based on files listed in whitelist file.
     If no whitelist is provided only the files under systems and pipes directories
@@ -297,7 +297,7 @@ def get_files_to_zip(directory, whitelist=None):
                 logger.error("Can't find {} directory in given directory".format(folder))
                 failed_exit()
 
-    files_to_zip = list()
+    files_to_deploy = list()
 
     for folder in whitelist.keys():
         if folder != "root":
@@ -305,7 +305,7 @@ def get_files_to_zip(directory, whitelist=None):
                 for file in files:
                     if file in whitelist[folder] or '*' in whitelist[folder]:
                         fn = os.path.join(base, file)
-                        files_to_zip.append((fn, os.path.relpath(fn, directory)))
+                        files_to_deploy.append((fn, os.path.relpath(fn, directory)))
 
     if 'root' in whitelist:
         for base, dirs, files in os.walk(directory):
@@ -313,18 +313,25 @@ def get_files_to_zip(directory, whitelist=None):
                 if file in whitelist['root'] or '*' in whitelist['root']:
                     fn = os.path.join(directory, file)
                     if os.path.isfile(fn):
-                        files_to_zip.append((fn, os.path.relpath(fn, directory)))
-    return files_to_zip
+                        files_to_deploy.append((fn, os.path.relpath(fn, directory)))
+    return files_to_deploy
 
 
-def create_zip(files):
+def create_zip(payload, payload_type):
     """Create zip based on a list of tuples containing (absolute file path, zip relative path)"""
 
     tf = tempfile.TemporaryFile(suffix='.zip')
     zf = zipfile.ZipFile(tf, mode='w', compression=zipfile.ZIP_BZIP2)
 
-    for fn, relpath in files:
-        zf.write(fn, relpath)
+    if payload_type == 'filelist':
+        for fn, relpath in payload:
+            zf.write(fn, relpath)
+    elif payload_type == 'json_array':
+        for config in payload:
+            zf.writestr("{}.conf.json".format(config['_id'].lower()), json.dumps(config))
+    else:
+        logger.error("Unknown payload type. Aborting")
+        failed_exit()
 
     zf.close()
     tf.seek(0)
@@ -389,6 +396,41 @@ def find_secrets_in_dict(search_dict):
     return found_secrets
 
 
+def disable_pump_scheduler(config_array):
+    """Modify node config to disable task scheduler"""
+    config_exists = False
+    for config in config_array:
+        if config['_id'] == "node":
+            if 'task_manager' in config:
+                config['task_manager']['disable_pump_scheduler'] = True
+            else:
+                config['task_manager'] = {"disable_pump_scheduler": True}
+            config_exists = True
+
+    default = {
+        "_id": "node",
+        "type": "metadata",
+        "task_manager": {
+            "disable_pump_scheduler": True
+        }
+    }
+
+    if not config_exists:
+        config_array.append(default)
+
+    return config_array
+
+
+def get_config_as_array(files_to_deploy):
+    """Returns an array with the full node config based on the list of tuples provided"""
+    config_array = []
+
+    for filename, relpath in files_to_deploy:
+        config_array.append(load_json(filename))
+
+    return config_array
+
+
 def main():
 
     api_url = os.getenv('NODE_API_URL')
@@ -424,12 +466,30 @@ def main():
     if whitelist_filename:
         whitelist = load_whitelist(base_path, whitelist_filename)
         logger.debug("Using whitelist: {}".format(whitelist))
-        files_to_zip = get_files_to_zip(base_path, whitelist)
-        zip = create_zip(files_to_zip)
     else:
+        whitelist = None
         logger.debug("Creating zip without whitelist")
-        files_to_zip = get_files_to_zip(base_path)
-        zip = create_zip(files_to_zip)
+
+    disable_on_upload = str_to_bool(os.getenv("NODE_DISABLE_PUMP_SCHEDULER", False))
+    if disable_on_upload:
+        # check if node metadata file is in whitelist
+        if whitelist:
+            if 'root' in whitelist:
+                if not "node-metadata.conf.json" in whitelist['root']:
+                    whitelist['root'].append("node-metadata.conf.json")
+            else:
+                whitelist['root'] = ["node-metadata.conf.json"]
+
+        files_to_deploy = get_files_to_deploy(base_path, whitelist)
+        config_array = get_config_as_array(files_to_deploy)
+
+        # add 'disable_pump_scheduler' to node metadata
+        config_array = disable_pump_scheduler(config_array)
+    else:
+        files_to_deploy = get_files_to_deploy(base_path, whitelist)
+        config_array = get_config_as_array(files_to_deploy)
+
+    zip = create_zip(config_array, payload_type='json_array')
 
     # check if necessary variables
     verify_env_vars = str_to_bool(os.getenv("NODE_VERIFY_VARS", False))
@@ -438,7 +498,7 @@ def main():
     if verify_env_vars or verify_secrets:
         all_used_vars = list()
         all_used_secrets = list()
-        for fn, relpath in files_to_zip:
+        for fn, relpath in files_to_deploy:
             config = load_json(fn)
 
             if verify_env_vars:
